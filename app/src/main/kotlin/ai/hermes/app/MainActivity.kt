@@ -28,6 +28,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.ServiceWorkerClientCompat
 import androidx.webkit.ServiceWorkerControllerCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 
 class MainActivity : AppCompatActivity() {
@@ -118,6 +119,19 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // 在页面加载前注入 JS，强制 Socket.IO 使用 polling transport
+        // 这是关键修复：WebSocket upgrade 在 HTTP 下的 WebView 经常失效
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                FORCE_POLLING_JS,
+                setOf("*")
+            )
+            Log.d(TAG, "Document-start JS injected")
+        } else {
+            Log.w(TAG, "DOCUMENT_START_SCRIPT not supported, falling back to onPageFinished")
+        }
+
         applyViewMode()
 
         CookieManager.getInstance().setAcceptCookie(true)
@@ -130,6 +144,12 @@ class MainActivity : AppCompatActivity() {
                 swipeRefresh.isRefreshing = false
                 errorView.visibility = View.GONE
                 swipeRefresh.visibility = View.VISIBLE
+                // Fallback injection for devices without DOCUMENT_START_SCRIPT support
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    view?.evaluateJavascript(FORCE_POLLING_JS) { result ->
+                        Log.d(TAG, "Fallback polling patch: $result")
+                    }
+                }
             }
 
             override fun onReceivedError(
@@ -179,6 +199,62 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "Hermes"
+
+        /**
+         * 核心修复：禁用 WebSocket + 劫持 Socket.IO 以强制 polling transport。
+         *
+         * Android WebView 在明文 HTTP 下 WebSocket upgrade 经常失败（静默断开）。
+         * 两道保险：
+         *   (1) 置 window.WebSocket = undefined → Socket.IO 检测不到 WebSocket 自动用 polling
+         *   (2) Hook window.io (如果存在) → 显式指定 transports: ['polling']
+         */
+        private const val FORCE_POLLING_JS = """
+            (function() {
+              try {
+                // (1) 禁用 WebSocket 全局构造函数
+                try {
+                  Object.defineProperty(window, 'WebSocket', {
+                    value: undefined,
+                    writable: true,
+                    configurable: true
+                  });
+                  console.log('[Hermes] WebSocket disabled');
+                } catch (e) {
+                  window.WebSocket = undefined;
+                  console.log('[Hermes] WebSocket nulled (fallback)');
+                }
+
+                // (2) 如果 Socket.IO 已暴露 io()，重写以强制 polling
+                if (typeof window.io === 'function' && !window.__hermesIoPatched) {
+                  window.__hermesIoPatched = true;
+                  var originalIO = window.io;
+                  window.io = function() {
+                    var args = Array.prototype.slice.call(arguments);
+                    var opts = {};
+                    var optsIdx = -1;
+                    for (var i = 0; i < args.length; i++) {
+                      if (typeof args[i] === 'object' && args[i] !== null && !Array.isArray(args[i])) {
+                        opts = args[i]; optsIdx = i; break;
+                      }
+                    }
+                    opts.transports = ['polling'];
+                    opts.upgrade = false;
+                    opts.rememberUpgrade = false;
+                    if (optsIdx === -1) args.push(opts);
+                    else args[optsIdx] = opts;
+                    return originalIO.apply(this, args);
+                  };
+                  for (var k in originalIO) {
+                    if (originalIO.hasOwnProperty(k)) window.io[k] = originalIO[k];
+                  }
+                  console.log('[Hermes] io() patched for polling');
+                }
+                return 'patched';
+              } catch (e) {
+                return 'error: ' + e.message;
+              }
+            })();
+        """
     }
 
     private fun applyViewMode() {
