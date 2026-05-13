@@ -99,12 +99,21 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Node.js (for mock Hermes server)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install mock server deps
+        run: npm install --no-save socket.io@4
+
       - name: Start mock Hermes server
         run: |
-          nohup python3 .github/scripts/mock_hermes.py 8648 > mock-hermes.log 2>&1 &
-          sleep 2
+          nohup node .github/scripts/mock_hermes.js 8648 > mock-hermes.log 2>&1 &
+          sleep 3
           curl -fsS http://127.0.0.1:8648/health
-          echo "Mock server ready"
+          curl -fsS http://127.0.0.1:8648/socket.io/socket.io.js > /dev/null
+          echo "Mock server ready (Socket.IO)"
 
       - name: AVD cache
         uses: actions/cache@v4
