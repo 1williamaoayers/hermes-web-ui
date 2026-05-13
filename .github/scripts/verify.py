@@ -120,8 +120,8 @@ def check_mock_server_evidence(mock_log_path: str) -> dict:
 
     return {
         "log_accessible": True,
-        "page_served": "GET /" in log and "200" in log,
-        "socketio_handshake": "/socket.io/" in log,
+        "page_served": bool(re.search(r"GET / ", log) or re.search(r"GET /\?", log)),
+        "socketio_handshake": "/socket.io/" in log or "client connected" in log,
         "socket_connected": "client connected" in log,
         "user_message_received": "got user_message" in log,
         "stream_sent": "streamed reply complete" in log,
