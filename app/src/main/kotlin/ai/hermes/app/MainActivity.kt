@@ -23,6 +23,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.ServiceWorkerClientCompat
 import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 
@@ -124,6 +125,17 @@ class MainActivity : AppCompatActivity() {
             DebugLog.log("Main", "I", "X-Requested-With cleared")
         }
 
+        // 注入 polyfill: 某些 WebView 版本缺少 window.visualViewport，
+        // 导致 Naive UI / Vue 组件在调用 .addEventListener 时报 TypeError
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            try {
+                WebViewCompat.addDocumentStartJavaScript(webView, POLYFILL_JS, setOf("*"))
+                DebugLog.log("Main", "I", "Polyfill script registered (document-start)")
+            } catch (e: Exception) {
+                DebugLog.log("Main", "W", "addDocumentStartJavaScript failed: ${e.message}")
+            }
+        }
+
         applyViewMode()
 
         CookieManager.getInstance().setAcceptCookie(true)
@@ -133,11 +145,17 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 DebugLog.log("WV", "I", "Page started: $url")
+                // Fallback polyfill injection for older WebView that doesn't support DOCUMENT_START_SCRIPT
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    view?.evaluateJavascript(POLYFILL_JS, null)
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 DebugLog.log("WV", "I", "Page finished: $url")
+                // Extra safety: re-inject polyfill on SPA route changes
+                view?.evaluateJavascript(POLYFILL_JS, null)
             }
 
             override fun onReceivedError(
@@ -303,5 +321,81 @@ class MainActivity : AppCompatActivity() {
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    companion object {
+        /**
+         * Polyfill for WebView APIs missing in older Android System WebView.
+         *
+         * Root cause of "Cannot read properties of undefined (reading 'addEventListener')"
+         * at ui-vendor (Naive UI bundle): window.visualViewport is undefined.
+         * Naive UI's use-touch / use-mouse / dialog components call
+         * visualViewport.addEventListener('resize', …) unconditionally.
+         *
+         * Chrome browser exposes visualViewport since Chrome 61 on all platforms,
+         * but the Android System WebView bundled on some devices (or older API
+         * levels) doesn't have it yet. Fix: provide a shim that forwards to
+         * window.resize so the Vue component code path succeeds.
+         */
+        private const val POLYFILL_JS = """
+            (function() {
+              try {
+                if (!window.visualViewport) {
+                  var listeners = {};
+                  var vv = {
+                    addEventListener: function(type, listener) {
+                      if (!listeners[type]) listeners[type] = [];
+                      listeners[type].push(listener);
+                      if (type === 'resize' || type === 'scroll') {
+                        window.addEventListener(type, listener);
+                      }
+                    },
+                    removeEventListener: function(type, listener) {
+                      var arr = listeners[type];
+                      if (arr) {
+                        var i = arr.indexOf(listener);
+                        if (i >= 0) arr.splice(i, 1);
+                      }
+                      window.removeEventListener(type, listener);
+                    },
+                    dispatchEvent: function(e) { return true; }
+                  };
+                  Object.defineProperties(vv, {
+                    width:  { get: function(){ return window.innerWidth; } },
+                    height: { get: function(){ return window.innerHeight; } },
+                    scale:  { get: function(){ return 1; } },
+                    offsetLeft: { get: function(){ return 0; } },
+                    offsetTop:  { get: function(){ return 0; } },
+                    pageLeft:   { get: function(){ return window.pageXOffset || 0; } },
+                    pageTop:    { get: function(){ return window.pageYOffset || 0; } }
+                  });
+                  try {
+                    Object.defineProperty(window, 'visualViewport', {
+                      value: vv, writable: false, configurable: false
+                    });
+                  } catch(_) { window.visualViewport = vv; }
+                  console.log('[Hermes] visualViewport polyfilled');
+                }
+
+                if (!document.fonts) {
+                  document.fonts = {
+                    ready: Promise.resolve(),
+                    status: 'loaded',
+                    size: 0,
+                    addEventListener: function(){},
+                    removeEventListener: function(){},
+                    dispatchEvent: function(){ return true; },
+                    check: function(){ return true; },
+                    load: function(){ return Promise.resolve([]); },
+                    forEach: function(){},
+                    has: function(){ return false; }
+                  };
+                  console.log('[Hermes] document.fonts polyfilled');
+                }
+              } catch (e) {
+                console.error('[Hermes] polyfill error:', (e && e.message) || e);
+              }
+            })();
+        """
     }
 }
