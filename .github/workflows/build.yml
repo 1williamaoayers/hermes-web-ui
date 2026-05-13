@@ -130,6 +130,8 @@ jobs:
       - name: Run emulator self-verification
         id: verify
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TEST_URL: http://10.0.2.2:8648
         with:
           api-level: 34
           arch: x86_64
@@ -137,26 +139,7 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: |
-            set -e
-            cd "$GITHUB_WORKSPACE"
-            pwd
-            ls -la HermesApp-v*.apk
-            mkdir -p verify-artifacts
-            export ARTIFACTS_DIR="$GITHUB_WORKSPACE/verify-artifacts"
-            export TEST_URL=http://10.0.2.2:8648
-            adb logcat -c
-            APK_FILE=$(ls -1 "$GITHUB_WORKSPACE"/HermesApp-v*.apk | head -1)
-            echo "Using APK: $APK_FILE"
-            if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
-              echo "::error::APK file not found"
-              echo "VERIFY_FAILED=1" > verify-status
-              exit 0
-            fi
-            if ! python3 .github/scripts/verify.py "$APK_FILE"; then
-              echo "VERIFY_FAILED=1" > verify-status
-            fi
-            echo "--- End of verify step ---"
+          script: bash .github/scripts/run_verify.sh
 
       - name: Determine verdict
         id: verdict
@@ -164,9 +147,15 @@ jobs:
           if [ -f verify-status ]; then
             echo "passed=false" >> $GITHUB_OUTPUT
             echo "::error::Self-verification FAILED — Release skipped"
+            echo "Status file content:"
+            cat verify-status
           else
             echo "passed=true" >> $GITHUB_OUTPUT
             echo "Self-verification PASSED"
+          fi
+          if [ -f verify-artifacts/verdict.txt ]; then
+            echo "Verdict details:"
+            cat verify-artifacts/verdict.txt
           fi
 
       - name: Upload verification artifacts
