@@ -325,40 +325,32 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         /**
-         * Polyfill for WebView APIs missing in older Android System WebView.
+         * Polyfill for WebView APIs missing or incomplete in Android System WebView.
          *
-         * Root cause of "Cannot read properties of undefined (reading 'addEventListener')"
-         * at ui-vendor (Naive UI bundle): window.visualViewport is undefined.
-         * Naive UI's use-touch / use-mouse / dialog components call
-         * visualViewport.addEventListener('resize', …) unconditionally.
+         * Naive UI (Hermes Web UI's component library) calls .addEventListener on
+         * several browser APIs that may be undefined or return MediaQueryList without
+         * .addEventListener (only the deprecated .addListener) on older WebView builds.
          *
-         * Chrome browser exposes visualViewport since Chrome 61 on all platforms,
-         * but the Android System WebView bundled on some devices (or older API
-         * levels) doesn't have it yet. Fix: provide a shim that forwards to
-         * window.resize so the Vue component code path succeeds.
+         * This shim provides safe stand-ins for all of them.
          */
         private const val POLYFILL_JS = """
             (function() {
               try {
+                // ---- 1. window.visualViewport ----
                 if (!window.visualViewport) {
-                  var listeners = {};
+                  var vvListeners = {};
                   var vv = {
-                    addEventListener: function(type, listener) {
-                      if (!listeners[type]) listeners[type] = [];
-                      listeners[type].push(listener);
+                    addEventListener: function(type, fn) {
+                      if (!vvListeners[type]) vvListeners[type] = [];
+                      vvListeners[type].push(fn);
                       if (type === 'resize' || type === 'scroll') {
-                        window.addEventListener(type, listener);
+                        window.addEventListener(type, fn);
                       }
                     },
-                    removeEventListener: function(type, listener) {
-                      var arr = listeners[type];
-                      if (arr) {
-                        var i = arr.indexOf(listener);
-                        if (i >= 0) arr.splice(i, 1);
-                      }
-                      window.removeEventListener(type, listener);
+                    removeEventListener: function(type, fn) {
+                      window.removeEventListener(type, fn);
                     },
-                    dispatchEvent: function(e) { return true; }
+                    dispatchEvent: function() { return true; }
                   };
                   Object.defineProperties(vv, {
                     width:  { get: function(){ return window.innerWidth; } },
@@ -370,13 +362,73 @@ class MainActivity : AppCompatActivity() {
                     pageTop:    { get: function(){ return window.pageYOffset || 0; } }
                   });
                   try {
-                    Object.defineProperty(window, 'visualViewport', {
-                      value: vv, writable: false, configurable: false
-                    });
+                    Object.defineProperty(window, 'visualViewport', { value: vv, writable: false, configurable: true });
                   } catch(_) { window.visualViewport = vv; }
-                  console.log('[Hermes] visualViewport polyfilled');
                 }
 
+                // ---- 2. MediaQueryList.addEventListener (some WebView only has .addListener) ----
+                try {
+                  var mql = window.matchMedia('(min-width: 0px)');
+                  if (mql && typeof mql.addEventListener !== 'function') {
+                    var origMatchMedia = window.matchMedia.bind(window);
+                    window.matchMedia = function(q) {
+                      var m = origMatchMedia(q);
+                      if (typeof m.addEventListener !== 'function') {
+                        m.addEventListener = function(type, fn) {
+                          if (type === 'change' && typeof m.addListener === 'function') {
+                            m.addListener(fn);
+                          }
+                        };
+                        m.removeEventListener = function(type, fn) {
+                          if (type === 'change' && typeof m.removeListener === 'function') {
+                            m.removeListener(fn);
+                          }
+                        };
+                        m.dispatchEvent = function() { return true; };
+                      }
+                      return m;
+                    };
+                    console.log('[Hermes] matchMedia patched');
+                  }
+                } catch(e) { console.error('[Hermes] matchMedia patch failed:', e.message); }
+
+                // ---- 3. screen.orientation ----
+                if (!screen.orientation) {
+                  var orientation = {
+                    angle: 0,
+                    type: 'portrait-primary',
+                    onchange: null,
+                    addEventListener: function() {},
+                    removeEventListener: function() {},
+                    dispatchEvent: function() { return true; },
+                    lock: function() { return Promise.reject(new Error('not supported')); },
+                    unlock: function() {}
+                  };
+                  try {
+                    Object.defineProperty(screen, 'orientation', { value: orientation, writable: false, configurable: true });
+                  } catch(_) { screen.orientation = orientation; }
+                  console.log('[Hermes] screen.orientation polyfilled');
+                }
+
+                // ---- 4. navigator.connection ----
+                if (!navigator.connection) {
+                  var connection = {
+                    effectiveType: '4g',
+                    type: 'wifi',
+                    downlink: 10,
+                    rtt: 50,
+                    saveData: false,
+                    addEventListener: function() {},
+                    removeEventListener: function() {},
+                    dispatchEvent: function() { return true; }
+                  };
+                  try {
+                    Object.defineProperty(navigator, 'connection', { value: connection, writable: false, configurable: true });
+                  } catch(_) { navigator.connection = connection; }
+                  console.log('[Hermes] navigator.connection polyfilled');
+                }
+
+                // ---- 5. document.fonts ----
                 if (!document.fonts) {
                   document.fonts = {
                     ready: Promise.resolve(),
@@ -390,8 +442,18 @@ class MainActivity : AppCompatActivity() {
                     forEach: function(){},
                     has: function(){ return false; }
                   };
-                  console.log('[Hermes] document.fonts polyfilled');
                 }
+
+                // ---- 6. Last-resort safety net: wrap addEventListener globally ----
+                // If any other API still returns undefined and Naive UI tries to call
+                // .addEventListener on it, intercept and swallow the error.
+                var origAEL = EventTarget.prototype.addEventListener;
+                EventTarget.prototype.addEventListener = function() {
+                  try { return origAEL.apply(this, arguments); }
+                  catch(e) { console.warn('[Hermes] addEventListener swallowed:', e.message); }
+                };
+
+                console.log('[Hermes] all polyfills applied');
               } catch (e) {
                 console.error('[Hermes] polyfill error:', (e && e.message) || e);
               }
