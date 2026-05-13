@@ -1,4 +1,4 @@
-name: Build & Release APK
+name: Build, Self-Verify & Release APK
 
 on:
   push:
@@ -11,6 +11,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.version.outputs.VERSION_NAME }}
+      version_code: ${{ steps.version.outputs.VERSION_CODE }}
+      apk_name: ${{ steps.version.outputs.APK_NAME }}
+      tag_name: ${{ steps.version.outputs.TAG_NAME }}
 
     steps:
       - name: Checkout
@@ -42,11 +47,10 @@ jobs:
         run: |
           VERSION_CODE=$(grep -oP 'versionCode = \K\d+' app/build.gradle.kts)
           VERSION_NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          echo "APK_NAME=HermesApp-v${VERSION_NAME}.apk" >> $GITHUB_ENV
-          echo "TAG_NAME=v${VERSION_NAME}" >> $GITHUB_ENV
-          echo "Building version: $VERSION_NAME (code $VERSION_CODE)"
+          echo "VERSION_CODE=$VERSION_CODE" | tee -a $GITHUB_OUTPUT $GITHUB_ENV
+          echo "VERSION_NAME=$VERSION_NAME" | tee -a $GITHUB_OUTPUT $GITHUB_ENV
+          echo "APK_NAME=HermesApp-v${VERSION_NAME}.apk" | tee -a $GITHUB_OUTPUT $GITHUB_ENV
+          echo "TAG_NAME=v${VERSION_NAME}" | tee -a $GITHUB_OUTPUT $GITHUB_ENV
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -60,35 +64,164 @@ jobs:
           cp "$SRC" "${{ env.APK_NAME }}"
           ls -lh "${{ env.APK_NAME }}"
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ env.APK_NAME }}
+          retention-days: 7
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.verdict.outputs.passed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: .
+
+      - name: Enable KVM for emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Start mock Hermes server
+        run: |
+          nohup python3 .github/scripts/mock_hermes.py 8648 > mock-hermes.log 2>&1 &
+          sleep 2
+          curl -fsS http://127.0.0.1:8648/health
+          echo "Mock server ready"
+
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-34-x86_64
+
+      - name: Create AVD snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: echo "AVD snapshot cached"
+
+      - name: Run emulator self-verification
+        id: verify
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            set -e
+            mkdir -p verify-artifacts
+            export ARTIFACTS_DIR=verify-artifacts
+            export TEST_URL=http://10.0.2.2:8648
+            adb logcat -c
+            APK_FILE=$(ls HermesApp-v*.apk | head -1)
+            echo "Using APK: $APK_FILE"
+            python3 .github/scripts/verify.py "$APK_FILE" || echo "VERIFY_FAILED=1" > verify-status
+
+      - name: Determine verdict
+        id: verdict
+        run: |
+          if [ -f verify-status ]; then
+            echo "passed=false" >> $GITHUB_OUTPUT
+            echo "::error::Self-verification FAILED — Release skipped"
+          else
+            echo "passed=true" >> $GITHUB_OUTPUT
+            echo "Self-verification PASSED"
+          fi
+
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-artifacts
+          path: |
+            verify-artifacts/
+            mock-hermes.log
+          retention-days: 14
+
+  release:
+    needs: [build, verify]
+    if: needs.verify.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: .
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: Hermes App ${{ env.TAG_NAME }}
+          tag_name: v${{ needs.build.outputs.version_name }}
+          name: Hermes App v${{ needs.build.outputs.version_name }}
           body: |
             **Hermes Agent Android App** — Native WebView client for Hermes Web UI
-            
+
+            This release was automatically verified by a CI Android emulator before publishing:
+            - APK installed on API 34 emulator
+            - WebView loaded a simulated Hermes page
+            - Chat UI rendering confirmed via UI Automator dump
+            - No critical JS errors in logcat
+
             ### Features
-            - First-launch URL prompt (configurable anytime in Settings)
-            - Mobile / Desktop mode toggle (persistent UA switch)
-            - Pull-to-refresh, file upload, TTS audio autoplay
-            - Session isolation: changing server URL clears cache & cookies
-            
+            - First-launch URL prompt (configurable anytime)
+            - Floating debug panel (bottom-right) with copyable JS logs
+            - Desktop / Mobile UA toggle
+            - Session isolation on URL change
+            - Material 3 DayNight theme
+
             ### Install
-            1. Download the APK below
-            2. Allow "Install from unknown sources"
-            3. Launch, enter your Hermes Web UI URL (e.g. `http://192.168.0.134:8648`)
-          files: ${{ env.APK_NAME }}
+            1. Download APK below, allow "Install from unknown sources"
+            2. Launch, enter your Hermes Web UI URL
+          files: HermesApp-v${{ needs.build.outputs.version_name }}.apk
           draft: false
           prerelease: false
           make_latest: "true"
 
       - name: Bump version for next build
         run: |
-          NEW_CODE=$((VERSION_CODE + 1))
-          NEW_NAME=$(python3 -c "v='${VERSION_NAME}'.split('.'); v[2]=str(int(v[2])+1); print('.'.join(v))")
-          sed -i "s/versionCode = ${VERSION_CODE}/versionCode = ${NEW_CODE}/" app/build.gradle.kts
-          sed -i "s/versionName = \"${VERSION_NAME}\"/versionName = \"${NEW_NAME}\"/" app/build.gradle.kts
+          VC=${{ needs.build.outputs.version_code }}
+          VN=${{ needs.build.outputs.version_name }}
+          NEW_CODE=$((VC + 1))
+          NEW_NAME=$(python3 -c "v='${VN}'.split('.'); v[2]=str(int(v[2])+1); print('.'.join(v))")
+          sed -i "s/versionCode = ${VC}/versionCode = ${NEW_CODE}/" app/build.gradle.kts
+          sed -i "s/versionName = \"${VN}\"/versionName = \"${NEW_NAME}\"/" app/build.gradle.kts
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add app/build.gradle.kts

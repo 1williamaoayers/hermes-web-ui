@@ -1,87 +1,212 @@
 package ai.hermes.app
 
+import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
-import android.widget.Button
+import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.EditText
-import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.browser.customtabs.CustomTabColorSchemeParams
-import androidx.browser.customtabs.CustomTabsIntent
-import androidx.core.content.ContextCompat
+import androidx.webkit.ServiceWorkerClientCompat
+import androidx.webkit.ServiceWorkerControllerCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
-    private lateinit var tvUrl: TextView
-    private lateinit var btnLaunch: Button
+    private lateinit var webView: WebView
+    private lateinit var fab: FloatingActionButton
+    private lateinit var chromeClient: HermesWebChromeClient
+
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val callback = chromeClient.filePathCallback ?: return@registerForActivityResult
+            val uris: Array<Uri>? = if (result.resultCode == Activity.RESULT_OK) {
+                val data = result.data
+                when {
+                    data == null -> null
+                    data.clipData != null -> {
+                        val count = data.clipData!!.itemCount
+                        Array(count) { i -> data.clipData!!.getItemAt(i).uri }
+                    }
+                    data.data != null -> arrayOf(data.data!!)
+                    else -> null
+                }
+            } else null
+            callback.onReceiveValue(uris)
+            chromeClient.filePathCallback = null
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         prefs = Prefs(this)
-        tvUrl = findViewById(R.id.tv_current_url)
-        btnLaunch = findViewById(R.id.btn_launch)
 
-        btnLaunch.setOnClickListener { launchHermes() }
-        findViewById<View>(R.id.btn_change_url).setOnClickListener { promptForUrl() }
-        findViewById<View>(R.id.btn_settings).setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
+        // CI 自测钩子：允许通过 Intent extra 预设 URL (绕过弹窗)
+        intent.getStringExtra("prefill_url")?.let {
+            if (it.isNotBlank()) {
+                prefs.serverUrl = it
+                DebugLog.log("Main", "I", "Prefilled URL from intent: $it")
+            }
         }
+
+        webView = findViewById(R.id.webview)
+        fab = findViewById(R.id.fab_menu)
+
+        fab.setOnClickListener { showFabMenu() }
+        fab.setOnLongClickListener {
+            openDebug()
+            true
+        }
+
+        setupWebView()
 
         if (prefs.isFirstLaunch) {
             promptForUrl()
         } else {
-            updateUrlDisplay()
+            loadHermes()
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        updateUrlDisplay()
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebView() {
+        WebView.setWebContentsDebuggingEnabled(true)
+
+        chromeClient = HermesWebChromeClient(this, fileChooserLauncher)
+        webView.webChromeClient = chromeClient
+
+        val s: WebSettings = webView.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.databaseEnabled = true
+        s.allowFileAccess = true
+        s.allowContentAccess = true
+        s.loadsImagesAutomatically = true
+        s.setSupportZoom(true)
+        s.builtInZoomControls = true
+        s.displayZoomControls = false
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.cacheMode = WebSettings.LOAD_DEFAULT
+        s.javaScriptCanOpenWindowsAutomatically = true
+        s.setSupportMultipleWindows(false)
+        s.textZoom = 100
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
+            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
+                object : ServiceWorkerClientCompat() {
+                    override fun shouldInterceptRequest(request: WebResourceRequest) = null
+                }
+            )
+        }
+
+        // 清空 X-Requested-With header
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+            WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
+            DebugLog.log("Main", "I", "X-Requested-With cleared")
+        }
+
+        applyViewMode()
+
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                DebugLog.log("WV", "I", "Page started: $url")
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                DebugLog.log("WV", "I", "Page finished: $url")
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    error?.description?.toString() ?: "unknown"
+                } else "unknown"
+                DebugLog.log("WV", "E", "Error ${request?.url}: $desc")
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: android.webkit.WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                DebugLog.log(
+                    "WV", "W",
+                    "HTTP ${errorResponse?.statusCode} for ${request?.url}"
+                )
+            }
+
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: SslErrorHandler?,
+                error: android.net.http.SslError?
+            ) {
+                DebugLog.log("WV", "W", "SSL error for ${error?.url}, proceeding")
+                handler?.proceed()
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val url = request?.url ?: return false
+                val scheme = url.scheme ?: return false
+                return if (scheme == "http" || scheme == "https") {
+                    false
+                } else {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, url))
+                    } catch (_: Exception) {
+                    }
+                    true
+                }
+            }
+        }
     }
 
-    private fun updateUrlDisplay() {
-        tvUrl.text = prefs.serverUrl.ifBlank { getString(R.string.not_set) }
+    private fun applyViewMode() {
+        webView.settings.userAgentString = when (prefs.viewMode) {
+            ViewMode.DESKTOP -> UserAgents.DESKTOP
+            ViewMode.MOBILE -> null
+        }
     }
 
-    private fun launchHermes() {
+    private fun loadHermes() {
         val url = prefs.serverUrl
         if (url.isBlank()) {
             promptForUrl()
             return
         }
-
-        val colorParams = CustomTabColorSchemeParams.Builder()
-            .setToolbarColor(ContextCompat.getColor(this, R.color.hermes_primary))
-            .setNavigationBarColor(ContextCompat.getColor(this, R.color.hermes_primary))
-            .build()
-
-        val intent = CustomTabsIntent.Builder()
-            .setDefaultColorSchemeParams(colorParams)
-            .setShowTitle(true)
-            .setUrlBarHidingEnabled(false)
-            .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
-            .setInstantAppsEnabled(false)
-            .build()
-
-        intent.intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://$packageName"))
-
-        try {
-            intent.launchUrl(this, Uri.parse(url))
-        } catch (e: Exception) {
-            // Fallback: 用默认浏览器
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            } catch (e2: Exception) {
-                Toast.makeText(this, R.string.error_no_browser, Toast.LENGTH_LONG).show()
-            }
-        }
+        DebugLog.log("Main", "I", "Loading: $url (mode=${prefs.viewMode})")
+        webView.loadUrl(url)
     }
 
     private fun promptForUrl() {
@@ -94,23 +219,89 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.dialog_url_title)
             .setMessage(R.string.dialog_url_message)
             .setView(input)
-            .setCancelable(!prefs.isFirstLaunch)
+            .setCancelable(false)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val url = input.text.toString().trim()
                 if (isValidUrl(url)) {
+                    if (prefs.serverUrl != url && prefs.serverUrl.isNotBlank()) {
+                        clearSession()
+                    }
                     prefs.serverUrl = url
-                    updateUrlDisplay()
-                    launchHermes()
+                    loadHermes()
                 } else {
                     Toast.makeText(this, R.string.invalid_url, Toast.LENGTH_SHORT).show()
                     promptForUrl()
                 }
             }
-            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
     private fun isValidUrl(url: String): Boolean {
         return url.matches(Regex("^https?://[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=%]+$"))
+    }
+
+    private fun clearSession() {
+        webView.clearCache(true)
+        webView.clearHistory()
+        webView.clearFormData()
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        DebugLog.log("Main", "I", "Session cleared")
+    }
+
+    private fun showFabMenu() {
+        val items = arrayOf(
+            getString(R.string.action_refresh),
+            getString(
+                if (prefs.viewMode == ViewMode.MOBILE) R.string.switch_to_desktop
+                else R.string.switch_to_mobile
+            ),
+            getString(R.string.action_change_url),
+            getString(R.string.action_debug),
+            getString(R.string.action_settings)
+        )
+        AlertDialog.Builder(this)
+            .setTitle(R.string.app_name)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> webView.reload()
+                    1 -> {
+                        prefs.viewMode = if (prefs.viewMode == ViewMode.MOBILE) ViewMode.DESKTOP else ViewMode.MOBILE
+                        applyViewMode()
+                        webView.reload()
+                    }
+                    2 -> promptForUrl()
+                    3 -> openDebug()
+                    4 -> startActivity(Intent(this, SettingsActivity::class.java))
+                }
+            }
+            .show()
+    }
+
+    private fun openDebug() {
+        startActivity(Intent(this, DebugActivity::class.java))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val currentUrl = webView.url
+        val targetUrl = prefs.serverUrl
+        if (targetUrl.isNotBlank() && currentUrl != null && !currentUrl.startsWith(targetUrl)) {
+            loadHermes()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack()
+        else @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
+            webView.goBack()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 }

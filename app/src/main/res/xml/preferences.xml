@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
         android:title="@string/pref_cat_server">
@@ -13,6 +14,34 @@
             android:key="test_connection"
             android:title="@string/pref_test_connection"
             android:summary="@string/pref_test_connection_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="@string/pref_cat_display">
+
+        <ListPreference
+            android:key="view_mode"
+            android:title="@string/pref_view_mode"
+            android:summary="%s"
+            android:entries="@array/view_mode_entries"
+            android:entryValues="@array/view_mode_values"
+            android:defaultValue="DESKTOP" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:title="@string/pref_cat_data">
+
+        <Preference
+            android:key="clear_cache"
+            android:title="@string/pref_clear_cache"
+            android:summary="@string/pref_clear_cache_summary" />
+
+        <Preference
+            android:key="debug"
+            android:title="调试日志"
+            android:summary="查看 WebView 加载和 JS 控制台日志" />
 
     </PreferenceCategory>
 

@@ -2,31 +2,45 @@
 <resources>
     <string name="app_name">Hermes</string>
 
-    <string name="launcher_subtitle">Hermes Agent 客户端</string>
-    <string name="current_url_label">当前服务器</string>
-    <string name="change_url">修改</string>
-    <string name="launch_hermes">打开 Hermes</string>
-    <string name="powered_by">由 Chrome 引擎驱动</string>
-
     <string name="dialog_url_title">配置 Server URL</string>
     <string name="dialog_url_message">请输入 Hermes Web UI 的地址</string>
     <string name="invalid_url">无效的 URL 格式，请以 http:// 或 https:// 开头</string>
 
-    <string name="action_refresh">重新打开</string>
+    <string name="action_refresh">刷新</string>
     <string name="action_settings">设置</string>
-
-    <string name="error_no_browser">未找到可用浏览器</string>
+    <string name="action_change_url">修改 URL</string>
+    <string name="action_debug">调试日志</string>
+    <string name="switch_to_desktop">切换到电脑版</string>
+    <string name="switch_to_mobile">切换到手机版</string>
+    <string name="mode_mobile">手机版</string>
+    <string name="mode_desktop">电脑版</string>
 
     <string name="settings_title">设置</string>
     <string name="not_set">未设置</string>
     <string name="testing">测试中…</string>
+    <string name="session_cleared">URL 已更新，会话已清除</string>
+    <string name="cache_cleared">缓存已清除</string>
 
     <string name="pref_cat_server">服务器</string>
+    <string name="pref_cat_display">显示</string>
+    <string name="pref_cat_data">数据</string>
     <string name="pref_cat_about">关于</string>
 
     <string name="pref_server_url">Server URL</string>
     <string name="pref_test_connection">测试连接</string>
     <string name="pref_test_connection_summary">检查服务器是否可达</string>
+    <string name="pref_view_mode">显示模式</string>
+    <string name="pref_clear_cache">清除缓存</string>
+    <string name="pref_clear_cache_summary">清除 cookies、localStorage 和缓存</string>
     <string name="pref_about_version">版本</string>
     <string name="pref_github">GitHub 仓库</string>
+
+    <string-array name="view_mode_entries">
+        <item>手机版</item>
+        <item>电脑版</item>
+    </string-array>
+    <string-array name="view_mode_values">
+        <item>MOBILE</item>
+        <item>DESKTOP</item>
+    </string-array>
 </resources>

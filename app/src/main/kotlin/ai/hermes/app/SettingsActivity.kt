@@ -4,10 +4,12 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.MenuItem
+import android.webkit.CookieManager
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import java.net.HttpURLConnection
@@ -59,17 +61,32 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
 
+            findPreference<ListPreference>("view_mode")?.apply {
+                value = prefs.viewMode.name
+                setOnPreferenceChangeListener { _, newValue ->
+                    prefs.viewMode = ViewMode.valueOf(newValue as String)
+                    true
+                }
+            }
+
+            findPreference<Preference>("clear_cache")?.setOnPreferenceClickListener {
+                clearCache()
+                true
+            }
+
             findPreference<Preference>("about")?.apply {
                 summary = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
             }
 
             findPreference<Preference>("github")?.setOnPreferenceClickListener {
                 startActivity(
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse("https://github.com/1williamaoayers/hermes-web-ui")
-                    )
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/1williamaoayers/hermes-web-ui"))
                 )
+                true
+            }
+
+            findPreference<Preference>("debug")?.setOnPreferenceClickListener {
+                startActivity(Intent(requireContext(), DebugActivity::class.java))
                 true
             }
         }
@@ -87,7 +104,12 @@ class SettingsActivity : AppCompatActivity() {
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     val url = input.text.toString().trim()
                     if (url.matches(Regex("^https?://[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=%]+$"))) {
+                        val changed = prefs.serverUrl != url
                         prefs.serverUrl = url
+                        if (changed) {
+                            clearSessionSilent()
+                            Toast.makeText(requireContext(), R.string.session_cleared, Toast.LENGTH_SHORT).show()
+                        }
                         findPreference<Preference>("server_url")?.summary = url
                     } else {
                         Toast.makeText(requireContext(), R.string.invalid_url, Toast.LENGTH_SHORT).show()
@@ -121,6 +143,20 @@ class SettingsActivity : AppCompatActivity() {
                     Toast.makeText(requireContext(), result, Toast.LENGTH_LONG).show()
                 }
             }
+        }
+
+        private fun clearCache() {
+            clearSessionSilent()
+            Toast.makeText(requireContext(), R.string.cache_cleared, Toast.LENGTH_SHORT).show()
+        }
+
+        private fun clearSessionSilent() {
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+            val webViewDir = requireContext().getDir("webview", 0)
+            webViewDir.deleteRecursively()
+            val cacheDir = requireContext().cacheDir
+            cacheDir.deleteRecursively()
         }
     }
 }
