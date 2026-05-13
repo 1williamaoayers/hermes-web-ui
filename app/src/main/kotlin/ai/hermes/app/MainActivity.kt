@@ -6,11 +6,14 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -23,6 +26,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.webkit.ServiceWorkerClientCompat
+import androidx.webkit.ServiceWorkerControllerCompat
+import androidx.webkit.WebViewFeature
 
 class MainActivity : AppCompatActivity() {
 
@@ -78,12 +84,16 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        // WebView 远程调试 (chrome://inspect)
+        WebView.setWebContentsDebuggingEnabled(true)
+
         chromeClient = HermesWebChromeClient(this, fileChooserLauncher)
         webView.webChromeClient = chromeClient
 
         val s: WebSettings = webView.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
+        s.databaseEnabled = true
         s.allowFileAccess = true
         s.allowContentAccess = true
         s.loadsImagesAutomatically = true
@@ -97,6 +107,16 @@ class MainActivity : AppCompatActivity() {
         s.cacheMode = WebSettings.LOAD_DEFAULT
         s.javaScriptCanOpenWindowsAutomatically = true
         s.setSupportMultipleWindows(false)
+        s.textZoom = 100
+
+        // 启用 ServiceWorker（关键：部分 Web 应用依赖它进行流式通信）
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) {
+            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(
+                object : ServiceWorkerClientCompat() {
+                    override fun shouldInterceptRequest(request: WebResourceRequest) = null
+                }
+            )
+        }
 
         applyViewMode()
 
@@ -106,6 +126,7 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                Log.d(TAG, "onPageFinished: $url")
                 swipeRefresh.isRefreshing = false
                 errorView.visibility = View.GONE
                 swipeRefresh.visibility = View.VISIBLE
@@ -117,9 +138,23 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
+                val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    error?.description?.toString() ?: "unknown"
+                } else "unknown"
+                Log.e(TAG, "onReceivedError: ${request?.url} - $desc")
                 if (request?.isForMainFrame == true) {
                     showError()
                 }
+            }
+
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: SslErrorHandler?,
+                error: android.net.http.SslError?
+            ) {
+                // 容忍自签证书 (开发/内网环境)
+                Log.w(TAG, "SSL error for ${error?.url}, proceeding anyway")
+                handler?.proceed()
             }
 
             override fun shouldOverrideUrlLoading(
@@ -140,6 +175,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "Hermes"
     }
 
     private fun applyViewMode() {

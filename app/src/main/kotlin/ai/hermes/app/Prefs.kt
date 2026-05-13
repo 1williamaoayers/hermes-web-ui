@@ -12,7 +12,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putString(KEY_SERVER_URL, value).apply()
 
     var viewMode: ViewMode
-        get() = ViewMode.valueOf(sp.getString(KEY_VIEW_MODE, ViewMode.MOBILE.name) ?: ViewMode.MOBILE.name)
+        get() = ViewMode.valueOf(sp.getString(KEY_VIEW_MODE, ViewMode.DESKTOP.name) ?: ViewMode.DESKTOP.name)
         set(value) = sp.edit().putString(KEY_VIEW_MODE, value.name).apply()
 
     val isFirstLaunch: Boolean

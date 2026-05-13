@@ -26,7 +26,7 @@
             android:summary="%s"
             android:entries="@array/view_mode_entries"
             android:entryValues="@array/view_mode_values"
-            android:defaultValue="MOBILE" />
+            android:defaultValue="DESKTOP" />
 
     </PreferenceCategory>
 

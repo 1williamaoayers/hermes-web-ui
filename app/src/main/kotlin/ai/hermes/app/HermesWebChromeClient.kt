@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Message
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -17,6 +19,19 @@ class HermesWebChromeClient(
 ) : WebChromeClient() {
 
     var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+        if (consoleMessage == null) return false
+        val tag = "HermesJS"
+        val msg = "${consoleMessage.message()} (${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+        when (consoleMessage.messageLevel()) {
+            ConsoleMessage.MessageLevel.ERROR -> Log.e(tag, msg)
+            ConsoleMessage.MessageLevel.WARNING -> Log.w(tag, msg)
+            ConsoleMessage.MessageLevel.DEBUG -> Log.d(tag, msg)
+            else -> Log.i(tag, msg)
+        }
+        return true
+    }
 
     override fun onShowFileChooser(
         webView: WebView?,
