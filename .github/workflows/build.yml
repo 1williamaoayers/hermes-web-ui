@@ -139,13 +139,24 @@ jobs:
           disable-animations: true
           script: |
             set -e
+            cd "$GITHUB_WORKSPACE"
+            pwd
+            ls -la HermesApp-v*.apk
             mkdir -p verify-artifacts
-            export ARTIFACTS_DIR=verify-artifacts
+            export ARTIFACTS_DIR="$GITHUB_WORKSPACE/verify-artifacts"
             export TEST_URL=http://10.0.2.2:8648
             adb logcat -c
-            APK_FILE=$(ls HermesApp-v*.apk | head -1)
+            APK_FILE=$(ls -1 "$GITHUB_WORKSPACE"/HermesApp-v*.apk | head -1)
             echo "Using APK: $APK_FILE"
-            python3 .github/scripts/verify.py "$APK_FILE" || echo "VERIFY_FAILED=1" > verify-status
+            if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
+              echo "::error::APK file not found"
+              echo "VERIFY_FAILED=1" > verify-status
+              exit 0
+            fi
+            if ! python3 .github/scripts/verify.py "$APK_FILE"; then
+              echo "VERIFY_FAILED=1" > verify-status
+            fi
+            echo "--- End of verify step ---"
 
       - name: Determine verdict
         id: verdict
