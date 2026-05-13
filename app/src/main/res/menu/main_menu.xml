@@ -6,11 +6,6 @@
         android:id="@+id/action_refresh"
         android:icon="@android:drawable/ic_menu_rotate"
         android:title="@string/action_refresh"
-        app:showAsAction="ifRoom" />
-
-    <item
-        android:id="@+id/action_toggle_mode"
-        android:title="@string/switch_to_desktop"
         app:showAsAction="never" />
 
     <item

@@ -11,10 +11,6 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SERVER_URL, "") ?: ""
         set(value) = sp.edit().putString(KEY_SERVER_URL, value).apply()
 
-    var viewMode: ViewMode
-        get() = ViewMode.valueOf(sp.getString(KEY_VIEW_MODE, ViewMode.DESKTOP.name) ?: ViewMode.DESKTOP.name)
-        set(value) = sp.edit().putString(KEY_VIEW_MODE, value.name).apply()
-
     val isFirstLaunch: Boolean
         get() = serverUrl.isBlank()
 
@@ -25,10 +21,5 @@ class Prefs(context: Context) {
     companion object {
         private const val PREFS_NAME = "hermes_prefs"
         private const val KEY_SERVER_URL = "server_url"
-        private const val KEY_VIEW_MODE = "view_mode"
     }
-}
-
-enum class ViewMode {
-    MOBILE, DESKTOP
 }
