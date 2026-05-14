@@ -4,11 +4,15 @@ cd "$GITHUB_WORKSPACE"
 
 mkdir -p verify-artifacts
 export ARTIFACTS_DIR="$GITHUB_WORKSPACE/verify-artifacts"
-export TEST_URL="${TEST_URL:-http://10.0.2.2:8648}"
+export TEST_URL="${TEST_URL:-http://10.0.2.2:8648/?autotest=1}"
+export MOCK_LOG="${MOCK_LOG:-$GITHUB_WORKSPACE/mock-hermes.log}"
 
 adb logcat -c || true
 
-APK_FILE=$(ls -1 "$GITHUB_WORKSPACE"/HermesApp-v*.apk 2>/dev/null | head -1)
+APK_FILE=$(ls -1 "$GITHUB_WORKSPACE"/HermesApp-v*-x86_64.apk 2>/dev/null | head -1)
+if [ -z "$APK_FILE" ]; then
+  APK_FILE=$(ls -1 "$GITHUB_WORKSPACE"/HermesApp-v*.apk 2>/dev/null | head -1)
+fi
 echo "Using APK: $APK_FILE"
 
 if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then

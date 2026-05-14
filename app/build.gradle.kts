@@ -11,8 +11,20 @@ android {
         applicationId = "ai.hermes.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.10"
+        versionCode = 12
+        versionName = "1.1.0"
+    }
+
+    // 生成两个 APK：
+    //   arm64-v8a (~30 MB) → 上传到 Release 给真实用户
+    //   x86_64    (~30 MB) → CI 模拟器使用
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
+        }
     }
 
     buildTypes {
@@ -51,6 +63,10 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // GeckoView 自带 .so，不能 strip
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -61,5 +77,6 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.2.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.webkit:webkit:1.12.1")
+    // Mozilla GeckoView - Firefox 引擎，替代 Android System WebView
+    implementation("org.mozilla.geckoview:geckoview:130.0.20240829171110")
 }

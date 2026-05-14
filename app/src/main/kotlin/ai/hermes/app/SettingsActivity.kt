@@ -4,17 +4,16 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.MenuItem
-import android.webkit.CookieManager
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
+import org.mozilla.geckoview.StorageController
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -61,14 +60,6 @@ class SettingsActivity : AppCompatActivity() {
                 true
             }
 
-            findPreference<ListPreference>("view_mode")?.apply {
-                value = prefs.viewMode.name
-                setOnPreferenceChangeListener { _, newValue ->
-                    prefs.viewMode = ViewMode.valueOf(newValue as String)
-                    true
-                }
-            }
-
             findPreference<Preference>("clear_cache")?.setOnPreferenceClickListener {
                 clearCache()
                 true
@@ -107,7 +98,7 @@ class SettingsActivity : AppCompatActivity() {
                         val changed = prefs.serverUrl != url
                         prefs.serverUrl = url
                         if (changed) {
-                            clearSessionSilent()
+                            clearStorageSilent()
                             Toast.makeText(requireContext(), R.string.session_cleared, Toast.LENGTH_SHORT).show()
                         }
                         findPreference<Preference>("server_url")?.summary = url
@@ -146,17 +137,18 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         private fun clearCache() {
-            clearSessionSilent()
+            clearStorageSilent()
             Toast.makeText(requireContext(), R.string.cache_cleared, Toast.LENGTH_SHORT).show()
         }
 
-        private fun clearSessionSilent() {
-            CookieManager.getInstance().removeAllCookies(null)
-            CookieManager.getInstance().flush()
-            val webViewDir = requireContext().getDir("webview", 0)
-            webViewDir.deleteRecursively()
-            val cacheDir = requireContext().cacheDir
-            cacheDir.deleteRecursively()
+        private fun clearStorageSilent() {
+            try {
+                HermesApplication.sRuntime?.storageController?.clearData(
+                    StorageController.ClearFlags.ALL
+                )
+            } catch (e: Exception) {
+                // ignore
+            }
         }
     }
 }
