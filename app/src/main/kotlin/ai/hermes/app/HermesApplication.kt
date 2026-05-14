@@ -17,7 +17,6 @@ class HermesApplication : Application() {
                 .remoteDebuggingEnabled(true)      // chrome://inspect 远程调试
                 .aboutConfigEnabled(true)
                 .javaScriptEnabled(true)
-                .webManifestEnabled(true)
                 .build()
             sRuntime = GeckoRuntime.create(this, settings)
             DebugLog.log("App", "I", "GeckoRuntime initialized")
