@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "ai.hermes.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "ai.hermes.app"
