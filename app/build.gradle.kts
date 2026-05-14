@@ -78,5 +78,5 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     // Mozilla GeckoView - Firefox 引擎，替代 Android System WebView
-    implementation("org.mozilla.geckoview:geckoview:130.0.20240829171110")
+    implementation("org.mozilla.geckoview:geckoview-omni:150.0.20260511200624")
 }
