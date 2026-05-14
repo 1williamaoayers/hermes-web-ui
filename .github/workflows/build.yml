@@ -53,32 +53,20 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build debug APK (all ABI splits)
+      - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Prepare APK artifacts
+      - name: Prepare APK artifact
         run: |
-          # arm64-v8a for users
-          ARM64_APK=$(find app/build/outputs/apk/debug -name "*arm64*" | head -1)
-          cp "$ARM64_APK" "HermesApp-v${VERSION_NAME}-arm64.apk"
-          ls -lh "HermesApp-v${VERSION_NAME}-arm64.apk"
-          # x86_64 for CI emulator
-          X86_APK=$(find app/build/outputs/apk/debug -name "*x86_64*" | head -1)
-          cp "$X86_APK" "HermesApp-v${VERSION_NAME}-x86_64.apk"
-          ls -lh "HermesApp-v${VERSION_NAME}-x86_64.apk"
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          cp "$APK" "HermesApp-v${VERSION_NAME}.apk"
+          ls -lh "HermesApp-v${VERSION_NAME}.apk"
 
-      - name: Upload arm64 APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-arm64
-          path: HermesApp-v${{ env.VERSION_NAME }}-arm64.apk
-          retention-days: 7
-
-      - name: Upload x86_64 APK (for CI verify)
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-x86_64
-          path: HermesApp-v${{ env.VERSION_NAME }}-x86_64.apk
+          name: apk
+          path: HermesApp-v${{ env.VERSION_NAME }}.apk
           retention-days: 7
 
   verify:
@@ -91,10 +79,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download x86_64 APK
+      - name: Download APK
         uses: actions/download-artifact@v4
         with:
-          name: apk-x86_64
+          name: apk
           path: .
 
       - name: Enable KVM for emulator
@@ -199,10 +187,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download arm64 APK
+      - name: Download APK
         uses: actions/download-artifact@v4
         with:
-          name: apk-arm64
+          name: apk
           path: .
 
       - name: Publish Release
@@ -214,34 +202,7 @@ jobs:
             **Hermes Agent Android App** v${{ needs.build.outputs.version_name }}
 
             Powered by **Mozilla GeckoView** (Firefox engine) — no longer depends on Android System WebView.
-
-            This release was automatically verified by a CI Android emulator before publishing:
-            - APK installed on API 34 emulator
-            - GeckoView loaded a Socket.IO mock Hermes page
-            - Chat message streaming confirmed end-to-end
-            - No critical JS errors
-
-            ### Features
-            - Full-screen GeckoView (Firefox engine, all web APIs supported)
-            - First-launch URL prompt (configurable anytime via FAB menu)
-            - Desktop UA mode by default (browser-like experience)
-            - File upload support
-            - Floating debug panel (long-press FAB)
-            - Session isolation on URL change
-            - Material 3 DayNight theme
-
-            ### Install
-            1. Download `HermesApp-v${{ needs.build.outputs.version_name }}-arm64.apk` below
-            2. Allow "Install from unknown sources"
-            3. Launch, enter your Hermes Web UI URL (e.g. `http://192.168.0.134:8648`)
-
-            ### Requirements
-            - Android 7.0+ (API 24)
-            - 64-bit ARM device (arm64-v8a) — covers 99%+ of modern Android phones
-
-            ### APK Size
-            ~30 MB (includes bundled Firefox engine — independent of system WebView)
-          files: HermesApp-v${{ needs.build.outputs.version_name }}-arm64.apk
+          files: HermesApp-v${{ needs.build.outputs.version_name }}.apk
           draft: false
           prerelease: false
           make_latest: "true"

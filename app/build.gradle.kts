@@ -11,21 +11,15 @@ android {
         applicationId = "ai.hermes.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.1.0"
-    }
+        versionCode = 13
+        versionName = "1.1.1"
 
-    // 生成两个 APK：
-    //   arm64-v8a (~30 MB) → 上传到 Release 给真实用户
-    //   x86_64    (~30 MB) → CI 模拟器使用
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "x86_64")
-            isUniversalApk = false
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
+
+    // geckoview-omni 已包含所有 ABI，不需要 splits
 
     buildTypes {
         release {
@@ -66,8 +60,8 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
         jniLibs {
-            // GeckoView 自带 .so，不能 strip
             useLegacyPackaging = true
+            keepDebugSymbols += "**/*.so"
         }
     }
 }
