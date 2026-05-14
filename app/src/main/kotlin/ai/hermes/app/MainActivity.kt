@@ -87,6 +87,19 @@ class MainActivity : AppCompatActivity() {
         } else {
             loadHermes()
         }
+
+        // 显示上次崩溃日志（如果有）
+        val crashLog = getSharedPreferences("crash_log", MODE_PRIVATE).getString("last_crash", null)
+        if (!crashLog.isNullOrBlank()) {
+            DebugLog.log("CRASH", "E", "Previous crash:\n$crashLog")
+            getSharedPreferences("crash_log", MODE_PRIVATE).edit().remove("last_crash").apply()
+            AlertDialog.Builder(this)
+                .setTitle("上次崩溃日志")
+                .setMessage(crashLog.take(1000))
+                .setPositiveButton("查看完整日志") { _, _ -> openDebug() }
+                .setNegativeButton("关闭", null)
+                .show()
+        }
     }
 
     private fun setupSession() {
@@ -94,130 +107,135 @@ class MainActivity : AppCompatActivity() {
             ?: run {
                 DebugLog.log("Main", "E", "GeckoRuntime not initialized!")
                 Toast.makeText(this, "Engine not ready", Toast.LENGTH_LONG).show()
-                finish()
                 return
             }
 
-        val settings = GeckoSessionSettings.Builder()
-            .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
-            .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
-            .allowJavascript(true)
-            .build()
+        try {
+            val settings = GeckoSessionSettings.Builder()
+                .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
+                .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
+                .allowJavascript(true)
+                .build()
 
-        val s = GeckoSession(settings)
-        s.open(runtime)
-        geckoView.setSession(s)
+            val s = GeckoSession(settings)
+            s.open(runtime)
+            geckoView.setSession(s)
 
-        s.navigationDelegate = object : GeckoSession.NavigationDelegate {
-            override fun onLocationChange(
-                session: GeckoSession,
-                url: String?,
-                perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
-                hasUserGesture: Boolean
-            ) {
-                DebugLog.log("Gecko", "I", "Location: $url")
+            s.navigationDelegate = object : GeckoSession.NavigationDelegate {
+                override fun onLocationChange(
+                    session: GeckoSession,
+                    url: String?,
+                    perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
+                    hasUserGesture: Boolean
+                ) {
+                    DebugLog.log("Gecko", "I", "Location: $url")
+                }
+
+                override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+                    this@MainActivity.canGoBack = canGoBack
+                }
+
+                override fun onLoadError(
+                    session: GeckoSession,
+                    uri: String?,
+                    error: WebRequestError
+                ): GeckoResult<String>? {
+                    DebugLog.log("Gecko", "E", "Load error: $uri code=${error.code}")
+                    return null
+                }
+
+                override fun onLoadRequest(
+                    session: GeckoSession,
+                    request: GeckoSession.NavigationDelegate.LoadRequest
+                ): GeckoResult<AllowOrDeny>? {
+                    val u = request.uri
+                    val scheme = Uri.parse(u).scheme
+                    if (scheme != null && scheme != "http" && scheme != "https" && scheme != "about" && scheme != "blob" && scheme != "data") {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                            return GeckoResult.fromValue(AllowOrDeny.DENY)
+                        } catch (_: Exception) {
+                        }
+                    }
+                    return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                }
             }
 
-            override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
-                this@MainActivity.canGoBack = canGoBack
+            s.progressDelegate = object : GeckoSession.ProgressDelegate {
+                override fun onPageStart(session: GeckoSession, url: String) {
+                    DebugLog.log("Gecko", "I", "Page start: $url")
+                    loadingView.visibility = View.VISIBLE
+                }
+
+                override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    DebugLog.log("Gecko", "I", "Page stop success=$success")
+                    loadingView.visibility = View.GONE
+                }
+
+                override fun onProgressChange(session: GeckoSession, progress: Int) {
+                    if (progress >= 100) loadingView.visibility = View.GONE
+                }
+
+                override fun onSecurityChange(
+                    session: GeckoSession,
+                    securityInfo: GeckoSession.ProgressDelegate.SecurityInformation
+                ) {}
             }
 
-            override fun onLoadError(
-                session: GeckoSession,
-                uri: String?,
-                error: WebRequestError
-            ): GeckoResult<String>? {
-                DebugLog.log("Gecko", "E", "Load error: $uri code=${error.code}")
-                return null
-            }
+            s.contentDelegate = object : GeckoSession.ContentDelegate {}
 
-            override fun onLoadRequest(
-                session: GeckoSession,
-                request: GeckoSession.NavigationDelegate.LoadRequest
-            ): GeckoResult<AllowOrDeny>? {
-                val u = request.uri
-                val scheme = Uri.parse(u).scheme
-                if (scheme != null && scheme != "http" && scheme != "https" && scheme != "about" && scheme != "blob" && scheme != "data") {
+            s.promptDelegate = object : GeckoSession.PromptDelegate {
+                override fun onFilePrompt(
+                    session: GeckoSession,
+                    prompt: GeckoSession.PromptDelegate.FilePrompt
+                ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+                    val gr = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                    pendingFileGeckoResult = gr
+                    pendingFilePrompt = prompt
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        if (prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE) {
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        }
+                    }
                     try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
-                        return GeckoResult.fromValue(AllowOrDeny.DENY)
-                    } catch (_: Exception) {
+                        fileChooserLauncher.launch(intent)
+                    } catch (e: Exception) {
+                        DebugLog.log("Gecko", "E", "File chooser launch failed: ${e.message}")
+                        gr.complete(prompt.dismiss())
+                        pendingFilePrompt = null
+                        pendingFileGeckoResult = null
                     }
+                    return gr
                 }
-                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
-            }
-        }
-
-        s.progressDelegate = object : GeckoSession.ProgressDelegate {
-            override fun onPageStart(session: GeckoSession, url: String) {
-                DebugLog.log("Gecko", "I", "Page start: $url")
-                loadingView.visibility = View.VISIBLE
             }
 
-            override fun onPageStop(session: GeckoSession, success: Boolean) {
-                DebugLog.log("Gecko", "I", "Page stop success=$success")
-                loadingView.visibility = View.GONE
-            }
-
-            override fun onProgressChange(session: GeckoSession, progress: Int) {
-                if (progress >= 100) loadingView.visibility = View.GONE
-            }
-
-            override fun onSecurityChange(
-                session: GeckoSession,
-                securityInfo: GeckoSession.ProgressDelegate.SecurityInformation
-            ) {}
-        }
-
-        s.contentDelegate = object : GeckoSession.ContentDelegate {}
-
-        s.promptDelegate = object : GeckoSession.PromptDelegate {
-            override fun onFilePrompt(
-                session: GeckoSession,
-                prompt: GeckoSession.PromptDelegate.FilePrompt
-            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
-                val gr = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
-                pendingFileGeckoResult = gr
-                pendingFilePrompt = prompt
-                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    if (prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE) {
-                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                    }
+            s.permissionDelegate = object : GeckoSession.PermissionDelegate {
+                override fun onContentPermissionRequest(
+                    session: GeckoSession,
+                    perm: GeckoSession.PermissionDelegate.ContentPermission
+                ): GeckoResult<Int>? {
+                    return GeckoResult.fromValue(GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW)
                 }
-                try {
-                    fileChooserLauncher.launch(intent)
-                } catch (e: Exception) {
-                    DebugLog.log("Gecko", "E", "File chooser launch failed: ${e.message}")
-                    gr.complete(prompt.dismiss())
-                    pendingFilePrompt = null
-                    pendingFileGeckoResult = null
+
+                override fun onMediaPermissionRequest(
+                    session: GeckoSession,
+                    uri: String,
+                    video: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
+                    audio: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
+                    callback: GeckoSession.PermissionDelegate.MediaCallback
+                ) {
+                    callback.grant(video?.firstOrNull(), audio?.firstOrNull())
                 }
-                return gr
             }
+
+            session = s
+            DebugLog.log("Main", "I", "GeckoSession setup complete")
+        } catch (e: Exception) {
+            DebugLog.log("Main", "E", "GeckoSession setup CRASHED: ${e.message}\n${e.stackTraceToString()}")
+            Toast.makeText(this, "Engine error: ${e.message}", Toast.LENGTH_LONG).show()
         }
-
-        s.permissionDelegate = object : GeckoSession.PermissionDelegate {
-            override fun onContentPermissionRequest(
-                session: GeckoSession,
-                perm: GeckoSession.PermissionDelegate.ContentPermission
-            ): GeckoResult<Int>? {
-                return GeckoResult.fromValue(GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW)
-            }
-
-            override fun onMediaPermissionRequest(
-                session: GeckoSession,
-                uri: String,
-                video: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
-                audio: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
-                callback: GeckoSession.PermissionDelegate.MediaCallback
-            ) {
-                callback.grant(video?.firstOrNull(), audio?.firstOrNull())
-            }
-        }
-
-        session = s
     }
 
     private fun loadHermes() {
