@@ -68,6 +68,26 @@ def wait_for_device():
     raise RuntimeError("Device boot timeout")
 
 
+def wait_for_network():
+    """Wait for emulator's WebView to be able to reach 10.0.2.2 (the host)."""
+    print("Waiting for emulator network…", flush=True)
+    for i in range(30):
+        out = adb(
+            "shell 'wget -q -O - http://10.0.2.2:8648/health 2>&1; echo EXIT=$?'",
+            check=False,
+        )
+        if "ok" in out and "EXIT=0" in out:
+            print(f"Network ready (probe {i+1})", flush=True)
+            return True
+        time.sleep(2)
+    state = adb("shell ping -c 1 -W 2 10.0.2.2", check=False)
+    if "1 received" in state or "1 packets received" in state:
+        print("Network ping ok", flush=True)
+        return True
+    print("WARN: network may not be ready", flush=True)
+    return False
+
+
 def install_apk(apk_path: str):
     print(f"Installing {apk_path}…", flush=True)
     adb(f"install -r -g {apk_path}")
@@ -201,6 +221,7 @@ def main():
 
     wait_for_device()
     adb("logcat -c")
+    wait_for_network()
 
     install_apk(apk)
     launch_with_url(TEST_URL)
