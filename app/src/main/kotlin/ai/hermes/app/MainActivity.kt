@@ -454,6 +454,21 @@ class MainActivity : AppCompatActivity() {
                 };
 
                 console.log('[Hermes] all polyfills applied');
+
+                // ---- 7. Capture FULL stack traces for unhandled errors ----
+                window.addEventListener('error', function(ev) {
+                  var msg = '[STACK] ' + (ev.message || 'error');
+                  if (ev.error && ev.error.stack) msg += '\n' + ev.error.stack;
+                  if (ev.filename) msg += '\n  at ' + ev.filename + ':' + ev.lineno + ':' + ev.colno;
+                  console.error(msg);
+                }, true);
+
+                window.addEventListener('unhandledrejection', function(ev) {
+                  var r = ev.reason;
+                  var msg = '[REJECT] ' + (r && r.message ? r.message : String(r));
+                  if (r && r.stack) msg += '\n' + r.stack;
+                  console.error(msg);
+                }, true);
               } catch (e) {
                 console.error('[Hermes] polyfill error:', (e && e.message) || e);
               }
