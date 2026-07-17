@@ -67,7 +67,7 @@ jobs:
         with:
           name: apk
           path: HermesApp-v${{ env.VERSION_NAME }}.apk
-          retention-days: 7
+          retention-days: 1
 
   verify:
     needs: build
@@ -174,7 +174,7 @@ jobs:
           path: |
             verify-artifacts/
             mock-hermes.log
-          retention-days: 14
+          retention-days: 1
 
   release:
     needs: [build, verify]
